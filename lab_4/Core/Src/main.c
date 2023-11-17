@@ -83,27 +83,36 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	}
 }
 
-int command_parser_state = IDLE;
-int command_flag = 0;
-char command_data[30];
+int cmd_parser_state = IDLE;
+int cmd_flag = 0;
+char cmd_data[30];
 
 void clear_buffer() {
 	memset(buffer, 0, MAX_BUFFER_SIZE);
-	memset(buffer, 0, MAX_BUFFER_SIZE);
 	index_buffer = 0;
 }
-void command_parser_fsm() {
-	switch(command_parser_state) {
+
+void clear_cmd_data() {
+	memset(cmd_data, 0, MAX_BUFFER_SIZE);
+	cmd_flag = 0;
+}
+
+void cmd_parser_fsm() {
+	switch (cmd_parser_state) {
 		case IDLE:
-			if (temp == '!') command_parser_state = RECEIVING;
+			if (temp == '!') {
+				clear_cmd_data();
+				cmd_parser_state = RECEIVING;
+			}
 			clear_buffer();
 			break;
 		case RECEIVING:
 			if (temp == '#') {
-				memcpy(command_data, buffer, sizeof(buffer));
-				command_flag = 1;
-				command_parser_state = IDLE;
+				memcpy(cmd_data, buffer, sizeof(buffer));
+				cmd_flag = 1;
 				HAL_UART_Transmit(&huart2, "\n\r", 2, 50);
+				clear_buffer();
+				cmd_parser_state = IDLE;
 			}
 			break;
 	}
@@ -112,20 +121,24 @@ void command_parser_fsm() {
 uint32_t ADC_value = 0;
 int uart_communication_fsm_state = IDLE;
 void uart_communication_fsm() {
-	switch(uart_communication_fsm_state) {
+	switch (uart_communication_fsm_state) {
 		case IDLE:
-			if (strcmp(command_data, "RST#") == 0) {
+			if ((cmd_flag == 1) && (strcmp(cmd_data, "RST#") == 0)) {
 				HAL_UART_Transmit(&huart2, "!ADC=", 5, 50);
 				HAL_ADC_Start(&hadc1);
 				ADC_value = HAL_ADC_GetValue(&hadc1);
 				char* str;
 				HAL_UART_Transmit(&huart2, (void*) str, sprintf(str, "%d#\n\r", ADC_value), 50);
 				setTimer1(3000);
-				clear_buffer();
 				uart_communication_fsm_state = SENDING;
 			}
+			cmd_flag = 0;
 			break;
 		case SENDING:
+			if ((cmd_flag == 1) && (strcmp(cmd_data, "OK#") == 0)) {
+				uart_communication_fsm_state = IDLE;
+			}
+			cmd_flag = 0;
 			if (timer1_flag == 1) {
 				HAL_UART_Transmit(&huart2, "!ADC=", 5, 50);
 				HAL_ADC_Start(&hadc1);
@@ -134,12 +147,6 @@ void uart_communication_fsm() {
 				HAL_UART_Transmit(&huart2, (void*) str, sprintf(str, "%d#\n\r", ADC_value), 50);
 				setTimer1(3000);
 			}
-			if (strcmp(command_data, "OK#") == 0) {
-//				clear_buffer();
-				uart_communication_fsm_state = IDLE;
-			}
-			break;
-		default:
 			break;
 	}
 }
@@ -187,11 +194,10 @@ int main(void)
   while (1)
   {
 	  if (buffer_flag == 1) {
-		  command_parser_fsm();
+		  cmd_parser_fsm();
 		  buffer_flag = 0;
 	  }
 	  uart_communication_fsm();
-
 
 	  if (timer0_flag == 1) {
 		  HAL_GPIO_TogglePin(LED_RED_GPIO_Port, LED_RED_Pin);
